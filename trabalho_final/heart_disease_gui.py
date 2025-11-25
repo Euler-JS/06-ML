@@ -288,7 +288,7 @@ class HeartDiseaseApp:
             self.result_text.insert(tk.END, f"📊 Acurácia: {self.predictor.model_info['accuracy']*100:.2f}%\n")
             self.result_text.insert(tk.END, f"📊 Precisão: {self.predictor.model_info['precision']*100:.2f}%\n")
             self.result_text.insert(tk.END, f"📊 Recall: {self.predictor.model_info['recall']*100:.2f}%\n")
-            self.result_text.insert(tk.END, f"📊 F1-Score: {self.predictor.model_info['f1']:.4f}\n")
+            self.result_text.insert(tk.END, f"📊 F1-Score: {self.predictor.model_info['f1_score']:.4f}\n")
             if self.predictor.model_info.get('roc_auc'):
                 self.result_text.insert(tk.END, f"📊 ROC AUC: {self.predictor.model_info['roc_auc']:.4f}\n")
             self.result_text.insert(tk.END, f"\n✨ Sistema pronto para fazer predições!\n")

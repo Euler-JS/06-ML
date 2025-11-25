@@ -369,6 +369,7 @@ print(f"   info = joblib.load('{info_path}')")
 print("\n" + "=" * 70)
 print("CONCLUSÕES")
 print("=" * 70)
+roc_auc_display = f"{results[best_model_name]['roc_auc']:.4f}" if results[best_model_name]['roc_auc'] else 'N/A'
 print(f"""
 ✅ Sistema de predição de risco cardíaco treinado com sucesso!
 
@@ -378,7 +379,7 @@ print(f"""
    • Precisão: {results[best_model_name]['precision']*100:.2f}%
    • Recall: {results[best_model_name]['recall']*100:.2f}%
    • F1-Score: {results[best_model_name]['f1']:.4f}
-   • ROC AUC: {results[best_model_name]['roc_auc']:.4f if results[best_model_name]['roc_auc'] else 'N/A'}
+   • ROC AUC: {roc_auc_display}
    • CV Accuracy: {results[best_model_name]['cv_mean']*100:.2f}% (±{results[best_model_name]['cv_std']*100:.2f}%)
 
 🔍 Total de pacientes analisados: {len(df_processed)}
