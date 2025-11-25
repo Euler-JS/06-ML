@@ -2,3 +2,5 @@ pip install opencv-python
 pip install numpy
 pip install pytesseract
 pip install matplotlib
+pip install paddlepaddle
+pip install paddleocr
