@@ -148,7 +148,7 @@ class DetectorPlacas:
     
     def preparar_para_ocr(self, placa_img):
         """
-        Prepara a imagem da placa para OCR
+        Prepara a imagem da placa para OCR com processamento avançado
         
         Args:
             placa_img: Imagem da placa
@@ -159,33 +159,111 @@ class DetectorPlacas:
         # Converter para escala de cinza
         gray = cv2.cvtColor(placa_img, cv2.COLOR_BGR2GRAY)
         
-        # Aplicar threshold adaptativo
-        thresh = cv2.adaptiveThreshold(
-            gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-            cv2.THRESH_BINARY, 11, 2
+        # Redimensionar para tamanho maior ANTES do processamento (melhor para OCR)
+        scale = 4  # Aumentado de 3 para 4
+        largura = int(gray.shape[1] * scale)
+        altura = int(gray.shape[0] * scale)
+        resized = cv2.resize(gray, (largura, altura), interpolation=cv2.INTER_CUBIC)
+        
+        # Aplicar denoising mais forte
+        denoised = cv2.fastNlMeansDenoising(resized, None, h=15, templateWindowSize=7, searchWindowSize=21)
+        
+        # CLAHE para melhor contraste
+        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
+        contraste = clahe.apply(denoised)
+        
+        # Binarização adaptativa com parâmetros ajustados
+        binary = cv2.adaptiveThreshold(
+            contraste, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+            cv2.THRESH_BINARY, 21, 15
         )
         
-        # Inverter se necessário (letras brancas em fundo preto)
-        # Contar pixels brancos e pretos
-        total_pixels = thresh.size
-        white_pixels = np.sum(thresh == 255)
+        # Inverter se fundo for escuro
+        if np.mean(binary) < 127:
+            binary = cv2.bitwise_not(binary)
         
-        if white_pixels < total_pixels / 2:
-            thresh = cv2.bitwise_not(thresh)
+        # Operações morfológicas mais suaves
+        kernel = np.ones((2,2), np.uint8)
+        morph = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=1)
+        morph = cv2.morphologyEx(morph, cv2.MORPH_OPEN, kernel, iterations=1)
         
-        # Remover ruído
-        kernel = np.ones((3, 3), np.uint8)
-        thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
-        thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+        # Adicionar borda branca (ajuda o OCR)
+        bordered = cv2.copyMakeBorder(morph, 20, 20, 20, 20, 
+                                       cv2.BORDER_CONSTANT, value=255)
         
-        # Redimensionar para melhorar OCR
-        thresh = cv2.resize(thresh, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+        return bordered
+    
+    def _pontuacao_formato(self, texto):
+        """Calcula pontuação baseada na proximidade com formato de placa"""
+        pontos = 0
+        texto_limpo = re.sub(r'[^A-Z0-9]', '', texto.upper())
         
-        return thresh
+        # Tamanho ideal: 8 caracteres (AAA###AA)
+        if len(texto_limpo) == 8:
+            pontos += 10
+        elif 7 <= len(texto_limpo) <= 9:
+            pontos += 5
+        
+        # Padrão Moçambique: 3 letras + 3 números + 2 letras
+        if re.match(r'^[A-Z]{3}[0-9]{3}[A-Z]{2}$', texto_limpo):
+            pontos += 20
+        elif re.match(r'^[A-Z]{3}[0-9]{3}', texto_limpo):
+            pontos += 10
+        
+        return pontos
+    
+    def corrigir_confusoes_comuns(self, texto):
+        """
+        Corrige confusões comuns de OCR baseado na posição dos caracteres
+        e padrões de placas moçambicanas (AAA###AA)
+        
+        Args:
+            texto: Texto extraído pelo OCR
+            
+        Returns:
+            Texto corrigido
+        """
+        if len(texto) < 8:
+            return texto
+        
+        texto_lista = list(texto)
+        
+        # Posições 0-2: devem ser LETRAS
+        for i in range(min(3, len(texto_lista))):
+            # Números confundidos com letras
+            texto_lista[i] = texto_lista[i].replace('0', 'O')
+            texto_lista[i] = texto_lista[i].replace('1', 'I')
+            texto_lista[i] = texto_lista[i].replace('5', 'S')
+            texto_lista[i] = texto_lista[i].replace('8', 'B')
+        
+        # Posições 3-5: devem ser NÚMEROS
+        for i in range(3, min(6, len(texto_lista))):
+            # Letras confundidas com números
+            texto_lista[i] = texto_lista[i].replace('O', '0')
+            texto_lista[i] = texto_lista[i].replace('I', '1')
+            texto_lista[i] = texto_lista[i].replace('Z', '2')
+            texto_lista[i] = texto_lista[i].replace('S', '5')
+            texto_lista[i] = texto_lista[i].replace('B', '8')
+        
+        # Posições 6-7: devem ser LETRAS
+        for i in range(6, min(8, len(texto_lista))):
+            # Números confundidos com letras
+            texto_lista[i] = texto_lista[i].replace('0', 'O')
+            texto_lista[i] = texto_lista[i].replace('1', 'I')
+            texto_lista[i] = texto_lista[i].replace('5', 'S')
+            texto_lista[i] = texto_lista[i].replace('8', 'B')
+            
+            # Correção específica H -> M (H é frequentemente confundido com M)
+            # Na primeira letra do sufixo (posição 6), H geralmente é M
+            if i == 6 and texto_lista[i] == 'H':
+                texto_lista[i] = 'M'
+        
+        texto_corrigido = ''.join(texto_lista)
+        return texto_corrigido
     
     def ler_placa_ocr(self, placa_processada):
         """
-        Lê o texto da placa usando OCR
+        Lê o texto da placa usando OCR com múltiplas tentativas e correções
         
         Args:
             placa_processada: Imagem da placa processada
@@ -194,17 +272,52 @@ class DetectorPlacas:
             Texto da placa
         """
         try:
-            # Aplicar OCR
-            texto = pytesseract.image_to_string(
-                placa_processada, 
-                config=self.tesseract_config
-            )
+            tentativas = []
             
-            # Limpar texto
+            # Configurações diferentes para tentar
+            configs = [
+                '--oem 3 --psm 7 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
+                '--oem 3 --psm 8 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
+                '--oem 1 --psm 7 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+            ]
+            
+            # Tentativa 1: Imagem original
+            for config in configs:
+                texto = pytesseract.image_to_string(placa_processada, config=config)
+                texto = texto.strip().upper()
+                texto = re.sub(r'[^A-Z0-9]', '', texto)
+                if texto:
+                    tentativas.append(texto)
+            
+            # Tentativa 2: Com mais contraste
+            contraste = cv2.convertScaleAbs(placa_processada, alpha=1.5, beta=0)
+            texto = pytesseract.image_to_string(contraste, config=configs[0])
             texto = texto.strip().upper()
             texto = re.sub(r'[^A-Z0-9]', '', texto)
+            if texto:
+                tentativas.append(texto)
             
-            return texto
+            # Tentativa 3: Com inversão
+            invertida = cv2.bitwise_not(placa_processada)
+            texto = pytesseract.image_to_string(invertida, config=configs[0])
+            texto = texto.strip().upper()
+            texto = re.sub(r'[^A-Z0-9]', '', texto)
+            if texto:
+                tentativas.append(texto)
+            
+            if not tentativas:
+                return ""
+            
+            # Aplicar correções em todas as tentativas
+            tentativas_corrigidas = [self.corrigir_confusoes_comuns(t) for t in tentativas]
+            
+            # Debug: mostrar tentativas
+            print(f"   Tentativas OCR: {tentativas_corrigidas[:3]}")
+            
+            # Pegar a melhor tentativa (maior pontuação)
+            melhor = max(tentativas_corrigidas, key=lambda t: self._pontuacao_formato(t))
+            
+            return melhor
         except Exception as e:
             print(f"Erro no OCR: {e}")
             return ""
@@ -222,17 +335,28 @@ class DetectorPlacas:
             Texto formatado (ou vazio se inválido)
         """
         texto_limpo = re.sub(r'[^A-Z0-9]', '', texto)
-        # Se vier com 9 caracteres, tenta remover o caractere extra central
-        if len(texto_limpo) == 9:
-            # Remove o caractere na posição 6 se as duas últimas posições não forem letras
-            if not (texto_limpo[7].isalpha() and texto_limpo[8].isalpha()):
-                texto_limpo = texto_limpo[:6] + texto_limpo[7:]
-            # Se ainda não for válido, tenta remover o caractere na posição 6 se não for letra
-            elif not texto_limpo[6].isalpha():
-                texto_limpo = texto_limpo[:6] + texto_limpo[7:]
+        
+        # Se vier com 9+ caracteres, tenta identificar e remover caracteres extras
+        if len(texto_limpo) > 8:
+            # Estratégia: procurar padrão AAA### e pegar os 2 últimos caracteres alfabéticos
+            # Remove caracteres extras que geralmente aparecem após os números
+            match = re.match(r'^([A-Z]{3})([0-9]{3})(.*)$', texto_limpo)
+            if match:
+                prefixo = match.group(1)  # AAA
+                numeros = match.group(2)  # ###
+                resto = match.group(3)    # resto (pode ter caracteres extras)
+                
+                # Pegar apenas as letras do resto (ignorar números extras)
+                letras_finais = re.sub(r'[^A-Z]', '', resto)
+                
+                # Se temos exatamente 2 letras, usar elas
+                if len(letras_finais) >= 2:
+                    texto_limpo = prefixo + numeros + letras_finais[:2]
+        
         # Só aceita se tiver 8 caracteres
         if len(texto_limpo) != 8:
             return ""
+        
         padrao_mocambique = r'^[A-Z]{3}[0-9]{3}[A-Z]{2}$'
         if re.match(padrao_mocambique, texto_limpo):
             return f"{texto_limpo[:3]} {texto_limpo[3:6]} {texto_limpo[6:]}"
