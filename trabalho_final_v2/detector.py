@@ -24,11 +24,11 @@ class DetectorPlacas:
         self.canny_thresh1 = 50 # Valor inferior para Canny 
         self.canny_thresh2 = 150 # Valor superior para Canny
         
-        # Parâmetros de filtragem de contornos
-        self.min_area = 500 # Área mínima do contorno da placa
-        self.max_area = 50000 # Área máxima do contorno da placa
-        self.min_aspect_ratio = 2.0 # Proporção mínima largura/altura da placa
-        self.max_aspect_ratio = 5.0 # Proporção máxima largura/altura da placa
+        # Parâmetros de filtragem de contornos (ajustados para imagens pequenas)
+        self.min_area = 100 # Área mínima do contorno da placa (reduzido para imagens pequenas)
+        self.max_area = 100000 # Área máxima do contorno da placa
+        self.min_aspect_ratio = 1.5 # Proporção mínima largura/altura da placa (mais flexível)
+        self.max_aspect_ratio = 6.0 # Proporção máxima largura/altura da placa
         
         # Configuração do OCR
         self.tesseract_config = '--oem 3 --psm 7 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789' # Configuração para reconhecer apenas letras e números
@@ -405,6 +405,26 @@ class DetectorPlacas:
         
         return resultado
     
+    def eh_imagem_placa_recortada(self, imagem):
+        """
+        Verifica se a imagem já é uma placa recortada (sem contexto do veículo)
+        
+        Args:
+            imagem: Imagem a verificar
+            
+        Returns:
+            True se for uma placa recortada, False caso contrário
+        """
+        altura, largura = imagem.shape[:2]
+        aspect_ratio = largura / altura
+        
+        # Placas recortadas geralmente são pequenas e com proporção horizontal
+        # Típico: largura entre 2x e 6x a altura
+        if altura < 200 and largura < 600 and 2.0 <= aspect_ratio <= 6.0:
+            return True
+        
+        return False
+    
     def processar_imagem(self, caminho_imagem, salvar_etapas=False):
         """
         Processa uma imagem completa
@@ -428,6 +448,47 @@ class DetectorPlacas:
         
         print(f"✓ Imagem carregada: {imagem.shape}")
         
+        # Verificar se é uma placa já recortada
+        if self.eh_imagem_placa_recortada(imagem):
+            print("ℹ️  Detectada imagem de placa recortada - processando diretamente...")
+            
+            # Processar diretamente sem buscar contornos
+            print("1️⃣  Preparando para OCR...")
+            placa_processada = self.preparar_para_ocr(imagem)
+            
+            print("2️⃣  Lendo placa com OCR...")
+            texto = self.ler_placa_ocr(placa_processada)
+            
+            print("3️⃣  Validando formato...")
+            texto_formatado = self.validar_formato_placa(texto)
+            
+            if texto_formatado:
+                print(f"✅ PLACA LIDA: {texto_formatado}")
+            else:
+                print(f"⚠️  Texto extraído: {texto} (formato inválido)")
+            
+            # Criar resultado visual simples
+            resultado = imagem.copy()
+            if texto_formatado:
+                cv2.putText(
+                    resultado, texto_formatado, (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2
+                )
+            
+            # Salvar etapas se solicitado
+            if salvar_etapas:
+                nome_arquivo = Path(caminho_imagem).stem
+                pasta_resultado = Path("resultados") / nome_arquivo
+                pasta_resultado.mkdir(parents=True, exist_ok=True)
+                
+                cv2.imwrite(str(pasta_resultado / "1_original.jpg"), imagem)
+                cv2.imwrite(str(pasta_resultado / "2_placa_processada.jpg"), placa_processada)
+                cv2.imwrite(str(pasta_resultado / "3_resultado_final.jpg"), resultado)
+                print(f"💾 Etapas salvas em: {pasta_resultado}")
+            
+            return resultado, texto_formatado, bool(texto_formatado)
+        
+        # Processamento normal para imagens completas
         # 1. Pré-processar
         print("1️⃣  Pré-processando imagem...")
         gray = self.preprocessar_imagem(imagem)
